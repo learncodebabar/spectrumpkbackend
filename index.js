@@ -7,6 +7,9 @@ import path from "path";
 import dns from "dns";
 import { fileURLToPath } from "url";
 
+// ...
+
+// Certificate Settings
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -37,6 +40,7 @@ import agentPaymentRoutes from "./routes/agentPaymentRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import agentDashboardRoutes from "./routes/agentDashboardRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import certificateSettingsRoutes from './routes/certificateSettingsRoutes.js';
 
 const app = express();
 
@@ -93,7 +97,7 @@ const connectDB = async () => {
             connectTimeoutMS: 15000,
             maxPoolSize: 5,
             family: 4,
-            dbName: 'dgss',
+            // dbName: 'dgss',
         });
 
         cachedConnection = conn;
@@ -150,6 +154,8 @@ app.get("/api/health", (req, res) => {
 // ============================================
 
 // Admin Routes
+app.use('/api', certificateSettingsRoutes);
+
 app.use('/api/admin/dashboard', dashboardRoutes);
 app.use("/api/admin", adminApplicationRoutes);
 app.use("/api/admin", adminRoutes);

@@ -19,19 +19,23 @@ const __dirname = path.dirname(__filename);
 // ============================================
 // ✅ HELPER: Extract ID file info (upload | url)
 // ============================================
+// ============================================
+// ✅ HELPER: Extract ID file info (upload | url)
+// ============================================
 const extractIdFileInfo = (req) => {
     let idFile = '';
     let idFilePublicId = '';
     let idFileUrl = req.body.idFileUrl || '';
     let idFileSource = 'none';
 
-    // Priority 1: Uploaded file
-    if (req.file) {
-        const uploadDir = path.join(__dirname, '../uploads/agents');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
+    // Ensure upload directory exists
+    const uploadDir = path.join(__dirname, '../uploads/agents');
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
 
+    // Priority 1: req.file (single upload)
+    if (req.file) {
         const fileName = `agent_${Date.now()}_${req.file.originalname}`;
         const filePath = path.join(uploadDir, fileName);
         fs.writeFileSync(filePath, req.file.buffer);
@@ -41,11 +45,17 @@ const extractIdFileInfo = (req) => {
         idFileSource = 'upload';
         idFileUrl = '';
     }
-    // Priority 2: Multiple files array
+    // Priority 2: req.files.idFile (multiple fields upload)
     else if (req.files && req.files.idFile && req.files.idFile[0]) {
         const file = req.files.idFile[0];
-        idFile = `/uploads/agents/${file.filename}`;
-        idFilePublicId = file.filename;
+
+        // ⭐ Memory storage — file save manually
+        const fileName = `id_${Date.now()}_${file.originalname}`;
+        const filePath = path.join(uploadDir, fileName);
+        fs.writeFileSync(filePath, file.buffer);
+
+        idFile = `/uploads/agents/${fileName}`;
+        idFilePublicId = fileName;
         idFileSource = 'upload';
         idFileUrl = '';
     }
@@ -61,7 +71,212 @@ const extractIdFileInfo = (req) => {
         idFileSource
     };
 };
+// ============================================
+// 16. REQUEST CERTIFICATE RENEWAL (Agent)
+// ============================================
+export const requestRenewal = async (req, res) => {
+    try {
+        const agent = await Agent.findById(req.agent.id);
 
+        if (!agent) {
+            return res.status(404).json({ success: false, message: "Agent not found" });
+        }
+
+        if (agent.approvalStatus !== 'approved') {
+            return res.status(403).json({
+                success: false,
+                message: "Only approved agents can request renewal"
+            });
+        }
+
+        // ⭐ Check: 30 days before expiry OR expired
+        const now = new Date();
+        const validTo = agent.certificateValidTo || agent.approvedAt;
+
+        if (!validTo) {
+            return res.status(400).json({ success: false, message: "No certificate validity found" });
+        }
+
+        const daysUntilExpiry = Math.ceil((new Date(validTo) - now) / (1000 * 60 * 60 * 24));
+
+        // Allow renewal if: expired OR within 30 days of expiry
+        if (daysUntilExpiry > 30) {
+            return res.status(400).json({
+                success: false,
+                message: `Renewal available only within 30 days of expiry. Days remaining: ${daysUntilExpiry}`,
+                daysUntilExpiry
+            });
+        }
+
+        // Check if already pending
+        if (agent.renewalRequest?.status === 'pending') {
+            return res.status(400).json({
+                success: false,
+                message: "You already have a pending renewal request"
+            });
+        }
+
+        agent.renewalRequest = {
+            status: 'pending',
+            requestedAt: new Date(),
+            reviewedAt: null,
+            reviewedBy: null,
+            rejectionReason: '',
+            notes: req.body.notes || ''
+        };
+
+        await agent.save();
+
+        res.json({
+            success: true,
+            message: "Renewal request submitted successfully. Please wait for admin approval.",
+            renewalRequest: agent.renewalRequest
+        });
+
+    } catch (error) {
+        console.error("❌ Request Renewal Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ============================================
+// 17. GET ALL RENEWAL REQUESTS (Admin)
+// ============================================
+export const getRenewalRequests = async (req, res) => {
+    try {
+        const { status = 'pending' } = req.query;
+
+        const filter = { 'renewalRequest.status': status };
+
+        const agents = await Agent.find(filter)
+            .select('name email phone jobTitle company certificateValidFrom certificateValidTo renewalRequest approvalStatus profileImage profileImageUrl createdAt approvedAt')
+            .sort({ 'renewalRequest.requestedAt': -1 });
+
+        res.json({
+            success: true,
+            count: agents.length,
+            requests: agents
+        });
+
+    } catch (error) {
+        console.error("❌ Get Renewal Requests Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ============================================
+// 18. APPROVE RENEWAL (Admin) — auto-renew
+// ============================================
+export const approveRenewal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const adminId = req.admin.id;
+        const { validityYears = 1, notes = '' } = req.body;
+
+        const agent = await Agent.findById(id);
+        if (!agent) {
+            return res.status(404).json({ success: false, message: "Agent not found" });
+        }
+
+        if (agent.renewalRequest?.status !== 'pending') {
+            return res.status(400).json({
+                success: false,
+                message: "No pending renewal request for this agent"
+            });
+        }
+
+        const now = new Date();
+        const newValidTo = new Date(now);
+        newValidTo.setFullYear(newValidTo.getFullYear() + Number(validityYears));
+
+        // ⭐ Auto-renew: naya validity period set karo
+        agent.certificateValidFrom = now;
+        agent.certificateValidTo = newValidTo;
+
+        agent.renewalRequest = {
+            status: 'approved',
+            requestedAt: agent.renewalRequest?.requestedAt,
+            reviewedAt: now,
+            reviewedBy: adminId,
+            rejectionReason: '',
+            notes: notes || ''
+        };
+
+        await agent.save();
+
+        // Send email (optional)
+        try {
+            const { sendApprovalEmail } = await import('../services/emailService.js');
+            await sendApprovalEmail(agent.email, agent.name);
+        } catch (e) {
+            console.error('Email error:', e.message);
+        }
+
+        res.json({
+            success: true,
+            message: `Certificate renewed successfully! New expiry: ${newValidTo.toLocaleDateString()}`,
+            agent: {
+                id: agent._id,
+                name: agent.name,
+                email: agent.email,
+                certificateValidFrom: agent.certificateValidFrom,
+                certificateValidTo: agent.certificateValidTo
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ Approve Renewal Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ============================================
+// 19. REJECT RENEWAL (Admin)
+// ============================================
+export const rejectRenewal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+        const adminId = req.admin.id;
+
+        if (!reason) {
+            return res.status(400).json({ success: false, message: "Rejection reason required" });
+        }
+
+        const agent = await Agent.findById(id);
+        if (!agent) {
+            return res.status(404).json({ success: false, message: "Agent not found" });
+        }
+
+        if (agent.renewalRequest?.status !== 'pending') {
+            return res.status(400).json({ success: false, message: "No pending renewal request" });
+        }
+
+        agent.renewalRequest = {
+            status: 'rejected',
+            requestedAt: agent.renewalRequest?.requestedAt,
+            reviewedAt: new Date(),
+            reviewedBy: adminId,
+            rejectionReason: reason,
+            notes: ''
+        };
+
+        await agent.save();
+
+        res.json({
+            success: true,
+            message: "Renewal request rejected",
+            agent: { id: agent._id, name: agent.name, email: agent.email }
+        });
+
+    } catch (error) {
+        console.error("❌ Reject Renewal Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+// ============================================
+// ✅ HELPER: Extract signature file (optional)
+// ============================================
 // ============================================
 // ✅ HELPER: Extract signature file (optional)
 // ============================================
@@ -69,10 +284,22 @@ const extractSignatureInfo = (req) => {
     let signature = '';
     let signaturePublicId = '';
 
+    // Priority 1: Uploaded signature file
     if (req.files && req.files.signature && req.files.signature[0]) {
         const file = req.files.signature[0];
-        signature = `/uploads/agents/${file.filename}`;
-        signaturePublicId = file.filename;
+
+        // ⭐ Memory storage — file save karo manually
+        const uploadDir = path.join(__dirname, '../uploads/agents');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const fileName = `sig_${Date.now()}_${file.originalname}`;
+        const filePath = path.join(uploadDir, fileName);
+        fs.writeFileSync(filePath, file.buffer);
+
+        signature = `/uploads/agents/${fileName}`;
+        signaturePublicId = fileName;
     }
 
     return { signature, signaturePublicId };

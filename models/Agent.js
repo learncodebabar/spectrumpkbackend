@@ -310,7 +310,29 @@ const agentSchema = new mongoose.Schema({
     rejectedAt: {
         type: Date,
         default: null
+    },// Agent.js mein add karo (agar nahi hai):
+
+certificateValidFrom: {
+    type: Date,
+    default: null
+},
+certificateValidTo: {
+    type: Date,
+    default: null
+},
+// ⭐ Renewal request fields
+renewalRequest: {
+    status: {
+        type: String,
+        enum: ['none', 'pending', 'approved', 'rejected'],
+        default: 'none'
     },
+    requestedAt: { type: Date, default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    rejectionReason: { type: String, default: '' },
+    notes: { type: String, default: '' }
+},
     rejectedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Admin',

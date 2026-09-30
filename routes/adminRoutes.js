@@ -24,7 +24,11 @@ import {
     approveAgent,
     rejectAgent,
     setPendingStatus,
-    deleteAgent
+    deleteAgent,
+    // ⭐ RENEWAL FUNCTIONS — agentController se
+    getRenewalRequests,
+    approveRenewal,
+    rejectRenewal
 } from '../controllers/agentController.js';
 
 // ⭐ Import payment controller functions
@@ -67,6 +71,13 @@ router.get('/all', protect, getAllAdmins);
 // ============================================
 router.get('/agents', protect, getAllAgents);
 router.get('/agents/pending', protect, getPendingAgents);
+
+// ⭐ RENEWAL ROUTES — MUST be before /agents/:id
+router.get('/agents/renewals', protect, getRenewalRequests);
+router.put('/agents/renewals/approve/:id', protect, approveRenewal);
+router.put('/agents/renewals/reject/:id', protect, rejectRenewal);
+
+// ⭐ These come AFTER renewal routes
 router.put('/agents/approve/:id', protect, approveAgent);
 router.put('/agents/reject/:id', protect, rejectAgent);
 router.put('/agents/pending/:id', protect, setPendingStatus);

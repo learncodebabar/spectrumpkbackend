@@ -1,3 +1,4 @@
+// backend/routes/agentRoutes.js
 import express from 'express';
 import multer from 'multer';
 import {
@@ -8,7 +9,8 @@ import {
     getProfile,
     updateProfile,
     changePassword,
-    getCertificate          // ⭐ already imported — good!
+    getCertificate,
+    requestRenewal          // ⭐ renewal request function
 } from '../controllers/agentController.js';
 import { protectAgent } from '../middleware/auth.js';
 
@@ -50,6 +52,9 @@ router.post('/login', login);
 
 // ⭐ CERTIFICATE — MUST be before '/:id' route!
 router.get('/certificate', protectAgent, getCertificate);
+
+// ⭐ RENEWAL REQUEST — agent applies for renewal
+router.post('/certificate/request-renewal', protectAgent, requestRenewal);
 
 router.get('/profile', protectAgent, getProfile);
 router.put(
